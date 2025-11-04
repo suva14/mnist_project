@@ -8,15 +8,18 @@ from tinygrad.nn.datasets import mnist
 from tinygrad.nn.state import get_state_dict, load_state_dict, safe_load, safe_save
 from export_model import export_model
 
-import math
+import math, os, time
+from datetime import datetime
 
+
+# --- ENUM & TRANSFORM ---
 class SamplingMod(Enum):
   BILINEAR = 0
   NEAREST = 1
 
+
 def geometric_transform(X: Tensor, angle_deg: Tensor, scale: Tensor, shift_x: Tensor, shift_y: Tensor, sampling: SamplingMod) -> Tensor:
     B, C, H, W = X.shape
-
     angle = angle_deg * math.pi / 180.0
     cos_a, sin_a = Tensor.cos(angle), Tensor.sin(angle)
     R11, R12, T13 = cos_a * scale, -sin_a * scale, shift_x
@@ -65,25 +68,31 @@ def normalize(X: Tensor) -> Tensor:
   return X * 2 / 255 - 1
 
 
-class Model:
+# --- MODEL ---
+class ConvNet:
   def __init__(self):
     self.layers: list[Callable[[Tensor], Tensor]] = [
-      nn.Conv2d(1, 32, 5), Tensor.silu,
-      nn.Conv2d(32, 32, 5), Tensor.silu,
-      nn.BatchNorm(32), Tensor.max_pool2d,
-      nn.Conv2d(32, 64, 3), Tensor.silu,
-      nn.Conv2d(64, 64, 3), Tensor.silu,
-      nn.BatchNorm(64), Tensor.max_pool2d,
-      lambda x: x.flatten(1), nn.Linear(576, 10),
+      lambda x: x.reshape(x.shape[0], 1, 28, 28),
+      nn.Conv2d(1, 32, 3, padding=1), Tensor.relu,
+      nn.Conv2d(32, 64, 3, padding=1), Tensor.relu,
+      lambda x: x.avg_pool2d(2),
+      nn.Conv2d(64, 128, 3, padding=1), Tensor.relu,
+      lambda x: x.avg_pool2d(2),
+      lambda x: x.flatten(1),
+      nn.Linear(128*7*7, 128), Tensor.relu,
+      nn.Linear(128, 10)
     ]
 
-  def __call__(self, x:Tensor) -> Tensor: return x.sequential(self.layers)
+  def __call__(self, x:Tensor) -> Tensor:
+    return x.sequential(self.layers)
 
+
+# --- TRAINING ---
 if __name__ == "__main__":
   B = int(getenv("BATCH", 512))
-  LR = float(getenv("LR", 0.02))
+  LR = float(getenv("LR", 0.01))
   LR_DECAY = float(getenv("LR_DECAY", 0.9))
-  PATIENCE = float(getenv("PATIENCE", 50))
+  PATIENCE = int(getenv("PATIENCE", 50))
 
   ANGLE = float(getenv("ANGLE", 15))
   SCALE = float(getenv("SCALE", 0.1))
@@ -95,7 +104,7 @@ if __name__ == "__main__":
   dir_name.mkdir(exist_ok=True)
 
   X_train, Y_train, X_test, Y_test = mnist()
-  model = Model()
+  model = ConvNet()
   opt = nn.optim.Muon(nn.state.get_parameters(model))
 
   @TinyJit
@@ -113,32 +122,80 @@ if __name__ == "__main__":
     return loss.realize(*opt.schedule_step())
 
   @TinyJit
-  def get_test_acc() -> Tensor: return (model(normalize(X_test)).argmax(axis=1) == Y_test).mean() * 100
+  def get_test_acc() -> Tensor:
+    return (model(normalize(X_test)).argmax(axis=1) == Y_test).mean() * 100
 
   test_acc, best_acc, best_since = float('nan'), 0, 0
+  best_file = None
+
   for i in (t:=trange(getenv("STEPS", 70))):
     loss = train_step()
 
     if (i % 10 == 9) and (test_acc := get_test_acc().item()) > best_acc:
       best_since = 0
       best_acc = test_acc
+
+      timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+      temp_file = dir_name / f"{model_name}_{timestamp}.safetensors"
       state_dict = get_state_dict(model)
-      safe_save(state_dict, dir_name / f"{model_name}.safetensors")
+      try:
+        safe_save(state_dict, temp_file)
+        best_file = temp_file
+      except PermissionError as e:
+        print(f"Warning: Could not save checkpoint: {e}")
       continue
 
     if (best_since := best_since + 1) % PATIENCE == PATIENCE - 1:
       best_since = 0
       opt.lr *= LR_DECAY
-      state_dict = safe_load(dir_name / f"{model_name}.safetensors")
-      load_state_dict(model, state_dict)
+      if best_file and best_file.exists():
+        try:
+          state_dict = safe_load(best_file)
+          load_state_dict(model, state_dict)
+        except Exception as e:
+          print(f"Warning: Could not reload best model: {e}")
 
     t.set_description(f"lr: {opt.lr.item():2.2e}  loss: {loss.item():2.2f}  accuracy: {best_acc:2.2f}%")
 
+  # --- EXPORT ---
   Device.DEFAULT = "WEBGPU"
-  model = Model()
-  state_dict = safe_load(dir_name / f"{model_name}.safetensors")
+  model = ConvNet()
+
+  if best_file and best_file.exists():
+    state_dict = safe_load(best_file)
+    load_state_dict(model, state_dict)
+  else:
+    print("Warning: No checkpoint found, using current model state")
+    state_dict = get_state_dict(model)
+
+  final_file = dir_name / f"{model_name}.safetensors"
+  for attempt in range(3):
+    try:
+      safe_save(state_dict, final_file)
+      break
+    except PermissionError:
+      if attempt < 2:
+        print(f"Retry saving final model... ({attempt + 1}/3)")
+        time.sleep(0.5)
+      else:
+        print("Error: Could not save final model after 3 attempts")
+        raise
+
   load_state_dict(model, state_dict)
   input = Tensor.randn(1, 1, 28, 28)
   prg, *_, state = export_model(model, Device.DEFAULT.lower(), input, model_name=model_name)
+
   safe_save(state, dir_name / f"{model_name}.webgpu.safetensors")
-  with open(dir_name / f"{model_name}.js", "w") as text_file: text_file.write(prg)
+  with open(dir_name / f"{model_name}.js", "w") as text_file:
+    text_file.write(prg)
+
+  # Nettoyage des checkpoints temporaires
+  if best_file:
+    for temp_file in dir_name.glob(f"{model_name}_*.safetensors"):
+      try:
+        temp_file.unlink()
+      except:
+        pass
+
+  print(f"\n✅ Training complete! Best accuracy: {best_acc:.2f}%")
+  print(f"Files saved in: {dir_name}")

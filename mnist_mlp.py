@@ -7,8 +7,9 @@ from tinygrad.helpers import getenv, trange
 from tinygrad.nn.datasets import mnist
 from tinygrad.nn.state import get_state_dict, load_state_dict, safe_load, safe_save
 from export_model import export_model
-
 import math
+from datetime import datetime
+import time
 
 class SamplingMod(Enum):
   BILINEAR = 0
@@ -69,8 +70,8 @@ class Model:
   def __init__(self):
     self.layers: list[Callable[[Tensor], Tensor]] = [
       lambda x: x.flatten(1),
-      nn.Linear(784, 512), Tensor.silu,
-      nn.Linear(512, 512), Tensor.silu,
+      nn.Linear(784, 512), Tensor.relu,
+      nn.Linear(512, 512), Tensor.relu,
       nn.Linear(512, 10),
     ]
 
@@ -80,7 +81,7 @@ if __name__ == "__main__":
   B = int(getenv("BATCH", 512))
   LR = float(getenv("LR", 0.02))
   LR_DECAY = float(getenv("LR_DECAY", 0.9))
-  PATIENCE = float(getenv("PATIENCE", 50))
+  PATIENCE = int(getenv("PATIENCE", 50))
 
   ANGLE = float(getenv("ANGLE", 15))
   SCALE = float(getenv("SCALE", 0.1))
@@ -93,7 +94,7 @@ if __name__ == "__main__":
 
   X_train, Y_train, X_test, Y_test = mnist()
   model = Model()
-  opt = nn.optim.Muon(nn.state.get_parameters(model))
+  opt = nn.optim.Adam(nn.state.get_parameters(model))
 
   @TinyJit
   @Tensor.train()
@@ -113,29 +114,86 @@ if __name__ == "__main__":
   def get_test_acc() -> Tensor: return (model(normalize(X_test)).argmax(axis=1) == Y_test).mean() * 100
 
   test_acc, best_acc, best_since = float('nan'), 0, 0
+  best_file = None
+  
   for i in (t:=trange(getenv("STEPS", 70))):
     loss = train_step()
 
     if (i % 10 == 9) and (test_acc := get_test_acc().item()) > best_acc:
       best_since = 0
       best_acc = test_acc
+      
+      # Utiliser un fichier avec timestamp pour éviter les conflits Windows
+      timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+      temp_file = dir_name / f"{model_name}_{timestamp}.safetensors"
       state_dict = get_state_dict(model)
-      safe_save(state_dict, dir_name / f"{model_name}.safetensors")
+      
+      try:
+        safe_save(state_dict, temp_file)
+        best_file = temp_file
+      except PermissionError as e:
+        print(f"Warning: Could not save checkpoint: {e}")
       continue
 
     if (best_since := best_since + 1) % PATIENCE == PATIENCE - 1:
       best_since = 0
       opt.lr *= LR_DECAY
-      state_dict = safe_load(dir_name / f"{model_name}.safetensors")
-      load_state_dict(model, state_dict)
+      
+      # Charger le meilleur modèle si disponible
+      if best_file and best_file.exists():
+        try:
+          state_dict = safe_load(best_file)
+          load_state_dict(model, state_dict)
+        except (PermissionError, Exception) as e:
+          print(f"Warning: Could not load checkpoint: {e}")
+      continue
 
     t.set_description(f"lr: {opt.lr.item():2.2e}  loss: {loss.item():2.2f}  accuracy: {best_acc:2.2f}%")
 
+  # Export final (fix Windows)
   Device.DEFAULT = "WEBGPU"
   model = Model()
-  state_dict = safe_load(dir_name / f"{model_name}.safetensors")
+  
+  if best_file and best_file.exists():
+    state_dict = safe_load(best_file)
+    load_state_dict(model, state_dict)
+  else:
+    # Si aucun checkpoint, utiliser le modèle actuel
+    print("Warning: No checkpoint found, using current model state")
+    state_dict = get_state_dict(model)
+  
+  # Sauvegarder le fichier final
+  final_file = dir_name / f"{model_name}.safetensors"
+  
+  # Attendre un peu et réessayer si le fichier est verrouillé
+  for attempt in range(3):
+    try:
+      safe_save(state_dict, final_file)
+      break
+    except PermissionError:
+      if attempt < 2:
+        time.sleep(0.5)
+        print(f"Retry saving final model... ({attempt + 1}/3)")
+      else:
+        print("Error: Could not save final model after 3 attempts")
+        raise
+  
+  # Export vers WebGPU
   load_state_dict(model, state_dict)
   input = Tensor.randn(1, 1, 28, 28)
   prg, *_, state = export_model(model, Device.DEFAULT.lower(), input, model_name=model_name)
+  
   safe_save(state, dir_name / f"{model_name}.webgpu.safetensors")
-  with open(dir_name / f"{model_name}.js", "w") as text_file: text_file.write(prg)
+  with open(dir_name / f"{model_name}.js", "w") as text_file: 
+    text_file.write(prg)
+  
+  # Nettoyage des fichiers temporaires
+  if best_file:
+    for temp_file in dir_name.glob(f"{model_name}_*.safetensors"):
+      try:
+        temp_file.unlink()
+      except:
+        pass
+  
+  print(f"\n✅ Training complete! Best accuracy: {best_acc:.2f}%")
+  print(f"Files saved in: {dir_name}")
