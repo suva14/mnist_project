@@ -4,7 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Digit Classifier</title>
+
+    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
     <script>
       tailwind.config = {
         theme: {
@@ -41,128 +47,93 @@
       };
     </script>
   </head>
+
   <body
     class="min-h-screen p-8 flex flex-col items-center justify-center bg-gray-50"
   >
     <div class="w-full max-w-xl flex flex-col gap-6">
+      <!-- HEADER -->
       <header
         class="border bg-card text-card-foreground shadow-sm rounded-xl p-6 flex flex-col gap-4"
       >
         <h1 class="text-3xl font-bold tracking-tight">Digit Classifier</h1>
         <p class="text-muted-foreground text-sm">
-          Select a model, then use the **Pen** to draw a single digit (0-9) on
-          the canvas. The classification result will update in real-time below.
+          Draw a digit (0–9) with the pen below, then the model will classify it
+          in real time.
         </p>
       </header>
 
+      <!-- MAIN -->
       <main
-        class="border bg-card text-card-foreground shadow-sm rounded-xl p-6 flex flex-col gap-4"
+        class="border bg-card text-card-foreground shadow-sm rounded-xl p-6 flex flex-col gap-6"
       >
+        <!-- Model selection -->
         <div class="flex flex-col sm:flex-row gap-3 items-end">
           <select
             name="model"
             id="model"
-            class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+            class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
           ></select>
 
           <button
-            id="run"
-            class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 w-full sm:w-auto"
+            id="clear"
+            class="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors bg-secondary text-secondary-foreground hover:bg-secondary/80 h-10 px-4 py-2 w-full sm:w-auto"
           >
-            Run Model
+            Clear
           </button>
+        </div>
+
+        <!-- Drawing canvas -->
+        <div class="flex flex-col items-center gap-3">
+          <canvas
+            id="draw-canvas"
+            width="280"
+            height="280"
+            class="border rounded-xl bg-black shadow-md"
+          ></canvas>
+          <div class="flex gap-3">
+            <button
+              id="pen"
+              class="bg-primary text-primary-foreground rounded-md px-3 py-2 text-sm"
+            >
+              ✏️ Pen
+            </button>
+            <button
+              id="eraser"
+              class="bg-muted text-foreground rounded-md px-3 py-2 text-sm"
+            >
+              🧽 Eraser
+            </button>
+          </div>
+        </div>
+
+        <!-- Output section -->
+        <div id="output" class="flex flex-col gap-3 items-center">
+          <h2 class="text-xl font-semibold">
+            Prediction: <span id="prediction">-</span>
+          </h2>
+          <p class="text-sm text-muted-foreground">
+            Inference time: <span id="inference-time">-</span> ms
+          </p>
+          <canvas id="prob-chart" width="400" height="150"></canvas>
         </div>
       </main>
 
+      <!-- FOOTER -->
       <footer
         class="border bg-card text-card-foreground shadow-sm rounded-xl p-6 flex flex-col gap-2 text-sm"
       >
         <div class="flex gap-2 items-center">
-          <span
-            class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"
-          ></span>
+          <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
           <p id="status" class="text-sm font-medium text-foreground">
-            initializing...
+            Initializing...
           </p>
         </div>
-
         <p id="timer" class="text-muted-foreground text-xs"></p>
       </footer>
     </div>
-    <script module>
-      let net;
 
-      const models = ["mnist_mlp", "mnist_convnet"];
-      const modelSelect = document.getElementById("model");
-      const statusText = document.getElementById("status");
-      const timerText = document.getElementById("timer");
-      const runButton = document.getElementById("run");
-
-      const error = (err) => {
-        statusText.innerHTML = `Error: ${err}`;
-        throw new Error(err);
-      };
-
-      const timer = async (func, label = "") => {
-        timerText.innerHTML = "";
-        const start = performance.now();
-        const out = await func();
-        const delta = (performance.now() - start).toFixed(1);
-        console.log(`${delta} ms ${label}`);
-        timerText.innerHTML = `${delta} ms ${label}`;
-        return out;
-      };
-
-      const getDevice = async () => {
-        if (!navigator.gpu) error("WebGPU not supported.");
-        const adapter = await navigator.gpu.requestAdapter();
-        return await adapter.requestDevice({
-          requiredFeatures: ["shader-f16"],
-          powerPreference: "high-performance",
-        });
-      };
-
-      const loadNet = async (modelName) => {
-        const jsPath = `./${modelName}/${modelName}.js`;
-        const netPath = `./${modelName}/${modelName}.webgpu.safetensors`;
-        try {
-          statusText.innerHTML = "loading the model...";
-          const device = await getDevice();
-          const tinygrad = (await import(jsPath)).default;
-          net = await timer(
-            () => tinygrad.load(device, netPath),
-            "(compilation)",
-          );
-          statusText.innerHTML = "ready to classify";
-        } catch (e) {
-          error(e);
-        }
-      };
-
-      const runNet = async () => {
-        if (!net) error("Net not loaded yet.");
-        const input = Array.from({ length: 784 }, (_) => 0);
-        const res = await timer(
-          () => net(new Float32Array(input)),
-          "(inference)",
-        );
-        const logits = Array.from(new Float32Array(res[0]));
-        statusText.innerHTML = `i guess it is a ...`;
-      };
-
-      const setup = async () => {
-        for (const model of models) {
-          const modelOpt = document.createElement("option");
-          modelOpt.value = model;
-          modelOpt.innerHTML = model;
-          modelSelect.appendChild(modelOpt);
-        }
-        modelSelect.addEventListener("change", (e) => loadNet(e.target.value));
-        runButton.addEventListener("click", () => runNet());
-        await loadNet(modelSelect.value);
-      };
-
-      setup();
-    </script>
+    <!-- LINK TO APP.JS -->
+    <script type="module" src="script.js"></script>
   </body>
 </html>

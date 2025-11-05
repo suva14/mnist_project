@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
   X_train, Y_train, X_test, Y_test = mnist()
   model = ConvNet()
-  opt = nn.optim.Muon(nn.state.get_parameters(model))
+  opt = nn.optim.Adam(nn.state.get_parameters(model))
 
   @TinyJit
   @Tensor.train()
