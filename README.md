@@ -1,15 +1,16 @@
-# MNIST Digit Classifier 🔢
+# MNIST Digit Classifier 
 
-![Project Screenshot](screenshot.png)
+![Project Screenshot](mnist.gif)
+
 *Interactive handwritten digit recognition powered by TinyGrad and WebGPU*
 
-## 🚀 Live Demo
+##  Live Demo
 
-**👉 [Try it live on GitHub Pages](https://suva14.github.io/mnist_project/)**
+** [Try it live on GitHub Pages](https://suva14.github.io/mnist_project/)**
 
 ---
 
-## 📖 Overview
+##  Overview
 
 This project implements a complete machine learning pipeline from training to deployment:
 - **Training**: Two neural networks (MLP and CNN) trained on MNIST using [TinyGrad](https://github.com/tinygrad/tinygrad)
@@ -20,18 +21,18 @@ The entire inference runs **client-side** using WebGPU, enabling fast prediction
 
 ---
 
-## ✨ Features
+##  Features
 
-- 🎨 **Interactive Drawing Canvas** with pen, eraser, and clear tools
-- 🧠 **Two Model Architectures**: Switch between MLP and CNN
-- 📊 **Real-time Visualization**: Probability bar chart for all 10 digits (0-9)
-- ⚡ **GPU-Accelerated Inference**: WebGPU for maximum performance
-- 📱 **Fully Responsive**: Works on desktop, tablet, and mobile
-- 🎯 **High Accuracy**: 98.20% (MLP) and 99.45% (CNN) on test set
+-  **Interactive Drawing Canvas** with pen, eraser, and clear tools
+-  **Two Model Architectures**: Switch between MLP and CNN
+-  **Real-time Visualization**: Probability bar chart for all 10 digits (0-9)
+-  **GPU-Accelerated Inference**: WebGPU for maximum performance
+-  **Fully Responsive**: Works on desktop, tablet, and mobile
+-  **High Accuracy**: 98.20% (MLP) and 99.45% (CNN) on test set
 
 ---
 
-## 🏆 Model Summary
+##  Model Summary
 
 | Model | Test Accuracy | 
 |-------|-------------|
@@ -50,7 +51,7 @@ The entire inference runs **client-side** using WebGPU, enabling fast prediction
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -87,7 +88,7 @@ http://localhost:8000
 
 ---
 
-## 📂 Project Structure
+##  Project Structure
 
 ```
 mnist_project/
@@ -108,7 +109,7 @@ mnist_project/
 
 ---
 
-## 🔬 Training Details
+##  Training Details
 
 ### Data Augmentation
 To improve generalization, training uses geometric transformations:
@@ -136,7 +137,7 @@ For full experimental results, see [HYPERPARAMETERS.md](HYPERPARAMETERS.md).
 
 ---
 
-## 🎯 Usage Guide
+##  Usage Guide
 
 1. **Select a model** from the dropdown (MLP or CNN)
 2. **Draw a digit** (0-9) on the black canvas using your mouse or finger
@@ -152,7 +153,7 @@ For full experimental results, see [HYPERPARAMETERS.md](HYPERPARAMETERS.md).
 
 ---
 
-## 📊 Performance Metrics
+##  Performance Metrics
 
 | Metric | MLP | CNN |
 |--------|-----|-----|
@@ -161,7 +162,7 @@ For full experimental results, see [HYPERPARAMETERS.md](HYPERPARAMETERS.md).
 | Inference Time | ~5ms | ~10ms |
 
 
-## 📝 Project Retrospective
+##  Project Retrospective
 
 ### Technical Challenges
 
